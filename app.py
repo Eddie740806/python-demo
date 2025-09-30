@@ -1,109 +1,155 @@
+# app.py
 import streamlit as st
 from pathlib import Path
-from PIL import Image
-import datetime
+from datetime import datetime
 
-# ========= 基本設定 =========
+# ================== 基本設定 ==================
 st.set_page_config(page_title="Eddie 小餐廳點餐系統", layout="wide")
+VERSION = "v2.2 (img+cart+receipt)"
 
-APP_DIR = Path(__file__).parent
-IMG_DIR = APP_DIR / "images"
+BASE_DIR = Path(__file__).parent
+IMG_DIR = BASE_DIR / "images"
 
-VERSION = "v2-img-debug"  # 方便你辨識現在跑的是不是新版
-
+# ================== 菜單 (只放檔名，路徑由程式組出) ==================
 MENU = {
-    "牛肉麵 🍜": {"price": 120, "img": "beef-noodle.jpg", "desc": "搭配手工製作的好味道 ✨"},
-    "滷肉飯 🍚": {"price": 80, "img": "braised-pork-rice.jpg", "desc": "經典台灣小吃 🇹🇼"},
-    "珍珠奶茶 🥤": {"price": 60, "img": "bubble-tea.jpg", "desc": "最受歡迎的飲料 👑"},
+    "牛肉麵 🍜": {
+        "price": 120,
+        "img": "beef-noodle.jpg",
+        "desc": "搭配手工製作的好味道 ✨",
+    },
+    "滷肉飯 🍚": {
+        "price": 80,
+        "img": "braised-pork-rice.jpg",
+        "desc": "經典台灣小吃 ❤️",
+    },
+    "珍珠奶茶 🧋": {
+        "price": 60,
+        "img": "bubble-tea.jpg",
+        "desc": "最受歡迎的飲料 🥤",
+    },
 }
 
+# ================== Session 初始化 ==================
 if "cart" not in st.session_state:
-    st.session_state.cart = {}
+    st.session_state.cart = {}        # {"品名": 數量}
 if "last_receipt" not in st.session_state:
     st.session_state.last_receipt = None
+if "receipts" not in st.session_state:
+    st.session_state.receipts = []    # 收據歷史
 
-st.markdown(f"**目前程式版本：{VERSION}**")  # <- 看到這行就是新版
+# ================== 小工具函式 ==================
+def add_to_cart(item_name: str, qty: int):
+    if qty <= 0:
+        return
+    st.session_state.cart[item_name] = st.session_state.cart.get(item_name, 0) + qty
 
-# ========= 左右版面 =========
-col1, col2 = st.columns([2, 3])
+def clear_cart():
+    st.session_state.cart = {}
 
-# ========= 左側：菜單 =========
-with col1:
-    st.title("🍴 今日菜單")
-    for name, info in MENU.items():
-        st.subheader(f"{name} — {info['price']} 元")
-        img_path = IMG_DIR / info["img"]
-        if img_path.exists():
-            try:
-                # 兩種方式擇一；保險起見先用 PIL 再 fallback
-                img = Image.open(img_path)
-                st.image(img, width=260)
-            except Exception as e:
-                st.warning(f"⚠ 圖片載入失敗（PIL）：{img_path}\n{e}")
-                st.image(str(img_path.resolve()), width=260)
-        else:
-            st.warning(f"⚠ 找不到圖片：{img_path}")
-        st.caption(info["desc"])
-        st.divider()
+def calc_total(cart: dict) -> int:
+    return sum(MENU[name]["price"] * q for name, q in cart.items())
 
-# ========= 右側：點餐 + 購物車 =========
-with col2:
-    st.title("🧾 我要點餐")
+def checkout():
+    if not st.session_state.cart:
+        return
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    receipt = {
+        "id": datetime.now().strftime("%Y%m%d%H%M%S"),
+        "time": now,
+        "items": st.session_state.cart.copy(),
+        "total": calc_total(st.session_state.cart),
+    }
+    st.session_state.last_receipt = receipt
+    st.session_state.receipts.append(receipt)
+    clear_cart()
 
-    item = st.selectbox("請選擇餐點", list(MENU.keys()))
-    qty = st.number_input("數量", min_value=1, step=1, value=1)
+# ================== 版面 ==================
+st.markdown(f"**⚡ 目前程式版本：{VERSION}**")
 
-    if st.button("➕ 加入購物車"):
-        st.session_state.cart[item] = st.session_state.cart.get(item, 0) + qty
-        st.success(f"已加入 {item} x {qty}")
+left, right = st.columns([2, 3])
+
+# ================== 左欄：今日菜單 ==================
+with left:
+    st.title("🍽️ 今日菜單")
+
+    # 把菜名、圖片、價格排版顯示
+    for name, item in MENU.items():
+        img_path = IMG_DIR / item["img"]
+        with st.container(border=True):
+            cols = st.columns([1, 3])
+            with cols[0]:
+                # 圖片：若雲端成功推上 GitHub，這裡就能看到
+                st.image(str(img_path), use_column_width=True)
+            with cols[1]:
+                st.subheader(f"{name} — {item['price']} 元")
+                st.caption(item["desc"])
 
     st.divider()
-    st.subheader("🛒 購物車")
 
-    if st.session_state.cart:
-        total = 0
+    st.subheader("🧾 我要點餐")
+    c1, c2 = st.columns([3, 2])
+
+    with c1:
+        dish = st.selectbox("請選擇餐點", list(MENU.keys()), index=0)
+
+    with c2:
+        # 數量：使用 number_input，避免版本差造成按鈕 callback 亂跑
+        qty = st.number_input("數量", min_value=1, max_value=99, value=1, step=1)
+
+    if st.button("➕ 加入購物車", use_container_width=False):
+        add_to_cart(dish, int(qty))
+        st.success(f"已加入 {dish} × {qty}")
+
+# ================== 右欄：購物車 + 收據 ==================
+with right:
+    st.title("🛒 購物車")
+
+    if not st.session_state.cart:
+        st.info("購物車是空的，先從左邊選餐點吧！", icon="ℹ️")
+    else:
+        total = calc_total(st.session_state.cart)
+        # 顯示購物車每一項
         for name, q in st.session_state.cart.items():
             price = MENU[name]["price"]
-            total += price * q
-            st.write(f"{name} x {q} = {price*q} 元")
+            line = f"{name} × {q}  （單價 {price} 元）  小計 {price*q} 元"
+            st.write("- " + line)
         st.subheader(f"💰 總金額：{total} 元")
 
-        if st.button("✅ 結帳"):
-            receipt = {
-                "id": datetime.datetime.now().strftime("%Y%m%d%H%M%S"),
-                "time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "items": st.session_state.cart.copy(),
-                "total": total,
-            }
-            st.session_state.last_receipt = receipt
-            st.session_state.cart.clear()
-            st.success("結帳完成 ✅ 收據已產生")
-    else:
-        st.info("購物車是空的，先從左邊選餐點吧！")
+        cc1, cc2 = st.columns(2)
+        with cc1:
+            if st.button("✅ 結帳", type="primary"):
+                checkout()
+                st.success("結帳完成！收據已產生於下方『收據』區塊。")
+        with cc2:
+            if st.button("🗑️ 清空購物車"):
+                clear_cart()
+                st.info("購物車已清空。")
 
     st.divider()
     st.subheader("🧾 收據")
-    rec = st.session_state.last_receipt
-    if rec:
-        with st.expander("展開/收合收據", expanded=True):
-            st.write(f"收據編號：{rec['id']}")
-            st.write(f"時間：{rec['time']}")
-            st.write("------")
+
+    # 最近一張收據（可收合）
+    with st.expander("📄 展開/收合『最近一張收據』", expanded=False):
+        rec = st.session_state.last_receipt
+        if not rec:
+            st.caption("目前尚無最近收據。")
+        else:
+            st.write(f"收據編號：**{rec['id']}**")
+            st.write(f"時間：**{rec['time']}**")
             for name, q in rec["items"].items():
-                price = MENU[name]["price"]
-                st.write(f"- {name} x {q} (單價 {price} 元)")
-            st.write(f"💰 總金額：{rec['total']} 元")
-    else:
-        st.caption("結帳後會顯示最新收據。")
+                st.write(f"• {name} × {q}  （單價 {MENU[name]['price']} 元）")
+            st.write(f"**總金額：{rec['total']} 元**")
 
-# ========= 偵錯資訊（幫你確認雲端看到的檔案）=========
-with st.expander("🔍 圖片偵錯資訊（只在你檢查時打開即可）", expanded=False):
-    st.write("APP_DIR：", str(APP_DIR.resolve()))
-    st.write("IMG_DIR：", str(IMG_DIR.resolve()))
-    st.write("IMG_DIR.exists()：", IMG_DIR.exists())
-    if IMG_DIR.exists():
-        files = [p.name for p in IMG_DIR.iterdir()]
-        st.write("images 目錄檔案：", files)
+    # 收據歷史（如不需要可移除）
+    with st.expander("🗂️ 收據歷史", expanded=False):
+        if not st.session_state.receipts:
+            st.caption("尚無歷史收據。")
+        else:
+            for i, r in enumerate(reversed(st.session_state.receipts), start=1):
+                st.markdown(f"**第 {i} 筆**｜收據編號：`{r['id']}`｜時間：`{r['time']}`｜總金額：`{r['total']}` 元")
+                with st.container():
+                    for name, q in r["items"].items():
+                        st.write(f"　• {name} × {q}  （單價 {MENU[name]['price']} 元）")
+                st.divider()
 
-# ========= 頁尾 =========
-st.caption("© Eddie demo — 若圖片未顯示，請確認 images/ 目錄與檔名是否正確，或在上方展開偵錯資訊。")
+    st.caption("© Eddie demo．若圖片未顯示，請確認 `images/` 目錄與檔名是否正確。")
